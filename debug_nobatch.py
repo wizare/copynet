@@ -29,15 +29,7 @@ class Encoder(nn.Module):
         out ,h = self.gru(embedding)
         return out ,h
 
-vocab_size = 20
-embed_size = 10
-hidden_size = 15
 
-encoder = Encoder(vocab_size, embed_size, hidden_size)
-
-x = torch.LongTensor([0,2,5,50,100]).unsqueeze(0)
-x = Variable(x)
-encoder_outputs , hidden = encoder(x)
 
 
 import torch.nn.functional as F
@@ -84,7 +76,7 @@ class Decoder(nn.Module):
         #   attentive reading
 
         attn_strength = self.attn(torch.cat((self.embed(input_idx) , pre_state.squeeze(0) ), 1))
-        attn_weights = F.softmax(attn_strength   )
+        attn_weights = F.softmax(attn_strength , dim=1  )
         
         attn_applied = torch.bmm( attn_weights.unsqueeze(0), encoder_outputs  )
         # attention combine
@@ -98,8 +90,8 @@ class Decoder(nn.Module):
         idx_from_input = torch.Tensor(np.array(idx_from_input, dtype=float)).view(1,-1)
         idx_from_input = Variable(idx_from_input)
 
-        if idx_from_input.sum().data[0]>1:
-            idx_from_input = idx_from_input/idx_from_input.sum().data[0]
+        if idx_from_input.sum(dim=1).data[0]>1:
+            idx_from_input = idx_from_input/idx_from_input.sum(dim=1).data[0]
 
         select_weights = idx_from_input * pre_prob_c
         select_applied = torch.bmm(  select_weights.unsqueeze(0) ,encoder_outputs)
@@ -122,7 +114,7 @@ class Decoder(nn.Module):
 
         #   softmax prob
         score = torch.cat([score_g,score_c],1) 
-        prob = F.softmax(score)
+        prob = F.softmax(score , dim=1)
         prob_g = prob[:,:vocab_size]    
         prob_c = prob[:,vocab_size:]    
 
@@ -154,15 +146,25 @@ class Decoder(nn.Module):
 
 
 
+vocab_size = 20
+embed_size = 10
+hidden_size = 15
+
+encoder = Encoder(vocab_size, embed_size, hidden_size)
+
+x = torch.LongTensor([0,2,5,50,100])
+x = Variable(x)
+encoder_outputs , hidden = encoder(x)
+print(hidden[:,-1].shape)
 
 decoder = Decoder(vocab_size,embed_size,hidden_size,5, 30)
-input_idx = Variable( torch.LongTensor([5]) )
+input_idx = Variable( torch.LongTensor([1]) )
 
 input_seq_idx = Variable( torch.LongTensor([5,2,5,20,27]) )
 
 pre_state = Variable( torch.randn(1,hidden_size ).unsqueeze(0) )
 
-pre_prob_c = Variable( torch.randn(1,5 ) )
+pre_prob_c = Variable( torch.zeros(1,5 ) )
 
 o , s , p = decoder(input_idx, encoder_outputs , input_seq_idx ,pre_state ,pre_prob_c )
 
