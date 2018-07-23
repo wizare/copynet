@@ -13,6 +13,7 @@ class Lang:
 			self.addWord(word)
 
 	def addWord(self, word):
+		
 		if word not in self.word2idx:
 			self.word2idx[word] = self.n_words
 			self.word2count[word] = 1
@@ -32,12 +33,13 @@ class Lang:
 		return res
 
 	def idx2string(self,idxs):
-		res = []
+		res = ''
 		for idx in idxs:
 			if idx in self.idx2word:
-				res.append( self.idx2word[word] )
+				res	+= self.idx2word[idx] 
 			else:
-				res.append( "<UNK>" )
+				res+=  "<UNK>" 
+			res += ' '
 		return res
 
 
@@ -54,20 +56,13 @@ lang = Lang()
 for (i,pairs) in enumerate(test_dialog):
 	lang.addSentence(pairs[0])
 	lang.addSentence(pairs[1])
+# print(lang.word2idx)
+
+s = "hello , my name is Bruce Lee . "
+t = lang.string2idx(s)
+print(t)
 
 
-
-idx_dialog = []
-for (i,pairs) in enumerate(test_dialog):
-	t = []
-	t.append(lang.string2idx(pairs[0]))
-	t.append(lang.string2idx(pairs[1]))
-	print(t)
-	idx_dialog.append( t  )
-	print('-'*8)
- 
-import torch
-idx_arr = np.array(idx_dialog)
-
-print(idx_arr)
-print(idx_arr.shape)
+ans = [12, 13, 14, 15, 4, 8, 9, 9, 10]
+s = lang.idx2string(ans)
+print(s)

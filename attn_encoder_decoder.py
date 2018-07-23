@@ -85,6 +85,7 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     for ei in range(input_length):
         encoder_output, encoder_hidden = encoder(
             input_tensor[ei], encoder_hidden)
+        print('encoder_output: ',encoder_output[0, 0].shape)
         encoder_outputs[ei] = encoder_output[0, 0]
 
     decoder_input = torch.tensor([[SOS_token]], device=device)
@@ -130,7 +131,7 @@ criterion = nn.NLLLoss()
 input_tensor = torch.tensor( [3, 4, 5, 6, 7, 8, 9, 10, 11], dtype=torch.long)
 target_tensor = torch.tensor( [3, 4, 5, 6, 7, 8, 9, 10, 11], dtype=torch.long)
 
-for i in range(100):
+for i in range(2):
 	train(
 		input_tensor, 
 		target_tensor, 
