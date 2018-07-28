@@ -1,99 +1,115 @@
-from torch import nn,optim
-import torch.nn.functional as F
-from torch.autograd import Variable
+import random
+
 import torch
-
+import torch.nn as nn
+from torch import optim
+import torch.nn.functional as F
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class Decoder(nn.Module):
-    def __init__(self,vocab_size,embed_size,hidden_size,max_length):
-        super(Decoder,self).__init__()
-
-        self.vocab_size = vocab_size
+    def __init__(self,vocab_size, embed_size, hidden_size , max_vocab_size ,   max_length , dropout_p=0.1,):
+        super(Decoder, self).__init__()
         self.hidden_size = hidden_size
-        self.embed = nn.Embedding(vocab_size,embed_size)
+        self.max_vocab_size = max_vocab_size
+        self.vocab_size = vocab_size
+        self.dropout_p = dropout_p
         self.max_length = max_length
+        self.embed_size = embed_size
+        self.embedding = nn.Embedding(self.vocab_size, self.embed_size)
 
+        #   attn_reading
+        self.attn = nn.Linear(self.hidden_size+self.embed_size, self.max_length)
+        self.attn_combine = nn.Linear(self.hidden_size+self.embed_size, self.hidden_size)
+        self.dropout = nn.Dropout(self.dropout_p)
 
-        #attention mechanism
-        self.attn = nn.Linear(self.hidden_size*2,max_length)
-        self.attn_combine = nn.Linear(self.hidden_size*2,self.hidden_size)
+        self.gru = nn.GRU(self.hidden_size*2, self.hidden_size)
 
-        # state rnn
-        self.gru = nn.GRU(
-            input_size=embed_size+hidden_size*2,
-            hidden_size=hidden_size,
-        )
-
-
-
-        #   weight 
+        #   score
         self.Wo = nn.Linear(hidden_size, vocab_size) # generate mode
-        self.Wc = nn.Linear(hidden_size*2, hidden_size) # copy mode
-        self.nonlinear = nn.Tanh()
+        self.Wc = nn.Linear(hidden_size, hidden_size) # copy mode
 
-    def forward(self,input_idx, encoder_outputs , input_input_seq_idx_idx ,pre_state ,pre_prob_c ):
-        #   input_idx       上一个预测输出的词的idx  1
-        #   encoder_outputs encoder隐藏层矩阵        [ input_seq_size * (hidden_size*2) ]
-        #   input_seq_idx  输入序列的索引           [ input_seq_size]
-        #   pre_state       上一个隐藏层状态          [hidden_size]
+        self.out = nn.Linear(self.hidden_size, self.vocab_size)
 
-        hidden_size = self.hidden_size
+    def forward(self, input, hidden, encoder_outputs , input_seq , pre_prob):
 
-        vocab_size = self.vocab_size
-
-
-
-        #   reading encoder hidden
+        # print('input: ',input.item())
+        # print('input_seq: ',input_seq)
+        # print('pre_prob: ',pre_prob)
+        batch_length = encoder_outputs.size(0)
         
-        #   attentive reading
 
-        attn_strength = self.attn(torch.cat((self.embed(input_idx) , pre_state ), 1))
-        attn_weights = F.softmax(attn_strength , dim=1  )
-        attn_applied = torch.bmm( attn_weights.unsqueeze(0), encoder_outputs.unsqueeze(0)  )
+        # print('input: ',input.shape)
+
+        sel_weights = torch.zeros(batch_length ,self.max_length , dtype=torch.long)
+        for i in range(batch_length):
+            sel_weights[i , :] = (input[i].item() == input_seq[i]).long() 
+        sel_weights =  sel_weights * pre_prob 
+        sel_weights = sel_weights.view(batch_length,1,-1)
+        # print('sel_weights: ' , sel_weights.shape)
+        sel_reading = torch.bmm(sel_weights ,encoder_outputs.long()).float()
+        # print('sel_reading:' , sel_reading.shape)
 
 
-        #   selective reading
 
-        idx_from_input = [int(i==input_idx.data[0]) for i in input_seq_idx ]
+        embedded = self.embedding(input).view(batch_length, 1, -1)
+        embedded = self.dropout(embedded)
 
-        idx_from_input = torch.Tensor(np.array(idx_from_input, dtype=float))
+        # print('embedded: ',embedded.shape)
+        # print('hidden:' , hidden.shape)
+        #   attn 
+        a = torch.cat((embedded.view(batch_length,-1), hidden.view(batch_length,-1)  ), 1)
+        # print(a.shape)
+        a = self.attn(a)
+        attn_weights = F.softmax( a , dim=1)
+        # print('attn_weights: ',attn_weights.shape)
+        attn_applied = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs)
+        # print('attn_applied: ',attn_applied.shape)
+        output = torch.cat((embedded, attn_applied), 2).squeeze(1)
+        output = self.attn_combine(output).unsqueeze(1)
+        output = F.relu(output)
+
+        # print('output: ' ,output.shape)
+        gru_input = torch.cat( (output,sel_reading) ,2).view(1,batch_length,-1)
+        # print('gru_input: ',gru_input.shape)
+        # output, hidden = self.gru(output, hidden)
+        output, hidden = self.gru(gru_input, hidden)   #    output same as hidden
+        hidden = hidden.squeeze(0)
+        # print('hidden: ',hidden.shape) #  b * hidden
+
+        score_g = self.Wo(hidden).view(batch_length,-1)
+        # print('score_g:',score_g.shape)  #   b * vocab_size
+
+        score_c = self.Wc(encoder_outputs)
+        score_c = F.tanh(score_c)
+        score_c = torch.bmm(score_c , hidden.view(batch_length,-1 ,1) ).squeeze(-1)
+        # print('score_c: ',score_c.shape)    # b * seq_size
+
+
+
+        score = F.softmax( torch.cat( (score_g,score_c) ,dim=1 ),dim=1 )
+        prob_g = score[:,:self.vocab_size]   # b * vocab_size 
+        prob_c = score[:,self.vocab_size:]    # b * seq_size
+
         
- 
-        for i in range(b):
-            if idx_from_input[i].sum().data[0]>1:
-                idx_from_input[i] = idx_from_input[i]/idx_from_input[i].sum().data[0]
-
-        select_weights = idx_from_input * pre_prob_c
-        select_applied = select_weights * encoder_outputs
-       
-
-        #   state update
-        gru_input = torch.cat( [attn_applied,select_applied ] ,1 )
-        state = self.gru(gru_input , pre_state)
+        if self.max_vocab_size>self.vocab_size:
+            padding = torch.zeros(batch_length,self.max_vocab_size-self.vocab_size) 
+            output1 = torch.cat([prob_g , padding  ], 1)
+        else:
+            output1 = prob_g
 
 
-        #   predict
+        seq_size = self.max_length
+        one_hot = torch.zeros(batch_length,seq_size,self.max_vocab_size).scatter_(2,input_seq.view(batch_length,-1,1),1)
+        
+        output1 += torch.bmm(prob_c.unsqueeze(1) , one_hot ).squeeze(1)
+        hidden = hidden.unsqueeze(0)
+        output1[output1==0] = 1e-9
+        output1[:,2] = 1e-9
 
-        #   generate mode
-        score_g = self.Wo(state)   
-        #   copy mode
-        score_c = F.tanh(self.Wc(encoder_outputs.contiguous().view(-1,hidden_size*2))) 
-        score_c = score_c.view(batch,-1,hidden_size) 
-        score_c = torch.bmm(score_c, state.unsqueeze(2)).squeeze() 
+        output1 = output1.log()
+        # print('output1: ',output1)
+        return output1 , hidden , attn_weights , prob_c
 
-        #   softmax prob
-        score = torch.cat([score_g,score_c],1) 
-        prob = F.softmax(score)
-        prob_g = prob[:,:vocab_size]    
-        prob_c = prob[:,vocab_size:]    
-
-
-
-        #   生成最终输出
-        out = torch.zeros(max_length)
-        for i,idx in enumerate(input_input_seq_idx_idx):
-            idx = int(idx)
-            out[idx] += prob_c[i]
-        out += torch.cat([prob_g,torch.zeros(max_length-vocab_size)],0)
+        # output = F.log_softmax(self.out(output[0]), dim=1)
+        # return output, hidden, attn_weights
 
 
-        return out , state , prob_c
